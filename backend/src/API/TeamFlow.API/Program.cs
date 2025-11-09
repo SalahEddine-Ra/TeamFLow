@@ -1,4 +1,5 @@
 using DotNetEnv;
+using FluentValidation;
 using FluentValidation.AspNetCore;
 using Microsoft.EntityFrameworkCore;
 using TeamFlowAPI.Infrastructure.Database;
@@ -15,7 +16,7 @@ builder.Services.AddControllers();
 var connectionString = Environment.GetEnvironmentVariable("CONNECTION_STRING");
 if (string.IsNullOrEmpty(connectionString))
 {
-    throw new InvalidOperationException("❌ Connection string is not configured. Check your .env.local file.");
+    throw new InvalidOperationException("Connection string is not configured. Check your .env.local file.");
 }
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
@@ -26,12 +27,9 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
 // FluentValidation
-builder.Services.AddControllers()
-    .AddFluentValidation(fv =>
-    {
-        fv.RegisterValidatorsFromAssemblyContaining<Program>();
-        fv.AutomaticValidationEnabled = true;
-    });
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddFluentValidationClientsideAdapters();
+builder.Services.AddValidatorsFromAssemblyContaining<Program>();
     
 
 

@@ -5,7 +5,7 @@ namespace TeamFlowAPI.Services.Interfaces;
 
 public interface IJwtService
 {
-    string GenerateAccessToken(User user, OrganizationUser orgMembership);
+    string GenerateAccessToken(User user, OrganizationUser organizationUser);
     ClaimsPrincipal? ValidateToken(string token);
     bool IsTokenExpired(string token);
 }
