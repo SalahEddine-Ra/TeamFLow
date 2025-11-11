@@ -31,7 +31,7 @@ public class ApplicationDbContext : DbContext
         
          // here i configure my fluent api by telling EF Core the rules of my existing database
          /* 
-            Even though your database already exists, EF Core needs to understand:
+            Even though my database already exists, EF Core needs to understand:
 
                 "This is how my tables are named"
 

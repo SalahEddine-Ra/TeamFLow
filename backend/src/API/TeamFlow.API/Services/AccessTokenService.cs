@@ -8,11 +8,14 @@ using TeamFlowAPI.Services.Interfaces;
 
 namespace TeamFlowAPI.Services
 {
-    public class JWTService : IJwtService
+    public class AccessTokenService
+     : IAccessTokenService
+    
     {
         private readonly IConfiguration _configuration;
 
-        public JWTService(IConfiguration configuration)
+        public AccessTokenService
+        (IConfiguration configuration)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }

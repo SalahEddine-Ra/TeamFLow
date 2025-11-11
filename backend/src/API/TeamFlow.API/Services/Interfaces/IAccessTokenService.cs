@@ -3,7 +3,7 @@ using TeamFlowAPI.Models.Entities;
 
 namespace TeamFlowAPI.Services.Interfaces;
 
-public interface IJwtService
+public interface IAccessTokenService
 {
     string GenerateAccessToken(User user, OrganizationUser organizationUser);
     ClaimsPrincipal? ValidateToken(string token);

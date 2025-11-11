@@ -12,7 +12,7 @@ public class User
     public string? PasswordHash { get; set; }
     public string? DisplayName { get; set; }
     public string? AvatarUrl { get; set; }
-    public bool IsActve { get; set; } = true;
+    public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
 
