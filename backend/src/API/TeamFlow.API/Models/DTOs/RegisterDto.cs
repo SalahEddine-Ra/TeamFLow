@@ -19,17 +19,12 @@ namespace TeamFlowAPI.Models.DTOs
 
     public class RegisterDtoValidator : AbstractValidator<RegisterDto>
     {
-        private readonly IUserService _userService;
-
-    public RegisterDtoValidator(IUserService userService)
+    public RegisterDtoValidator()
     {
-        _userService = userService;
-
         RuleFor(x => x.Email)
             .NotEmpty().WithMessage("Email is required")
             .EmailAddress().WithMessage("Valid email required")
-            .MaximumLength(255).WithMessage("Email too long")
-            .MustAsync(BeUniqueEmail).WithMessage("Email already registered");
+            .MaximumLength(255).WithMessage("Email too long");
 
         RuleFor(x => x.Password)
             .NotEmpty().WithMessage("Password is required")
@@ -43,11 +38,6 @@ namespace TeamFlowAPI.Models.DTOs
             .NotEmpty().WithMessage("Display name is required")
             .MaximumLength(100).WithMessage("Display name too long")
             .Matches("^[a-zA-Z0-9 ]*$").WithMessage("Display name can only contain letters, numbers and spaces");
-    }
-
-    private async Task<bool> BeUniqueEmail(string email, CancellationToken cancellationToken)
-    {
-        return !await _userService.EmailExistsAsync(email);
     }
         
     }

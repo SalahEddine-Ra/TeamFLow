@@ -9,7 +9,7 @@ using TeamFlowAPI.Services.Interfaces;
 namespace TeamFlowAPI.Services
 {
     public class AccessTokenService
-     : IAccessTokenService
+     : IAccessTokensService
     
     {
         private readonly IConfiguration _configuration;
@@ -20,7 +20,7 @@ namespace TeamFlowAPI.Services
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
-        public string GenerateAccessToken(User user, OrganizationUser organizationUser)
+        public string GenerateAccessToken(User user, OrganizationUser organizationUser, bool isPlatformAdmin)
         {
             if (user == null)
                 throw new ArgumentNullException(nameof(user));
@@ -28,7 +28,7 @@ namespace TeamFlowAPI.Services
                 throw new ArgumentNullException(nameof(organizationUser));
 
             // Claims
-            var claims = new[]
+            var claims = new List<Claim>
             {
                 new Claim("userId", user.Id.ToString()),
                 new Claim("displayName", user.DisplayName ?? string.Empty),
@@ -36,6 +36,14 @@ namespace TeamFlowAPI.Services
                 new Claim("orgId", organizationUser.OrgId.ToString()), 
                 new Claim("orgName", organizationUser.Organization.Name) 
             };
+
+            if (isPlatformAdmin)
+            {
+                claims.Add(new Claim(ClaimTypes.Role, "PlatformAdmin"));
+            }
+
+            claims.Add(new Claim("orgRole", organizationUser.Role)); 
+
 
             // Load JWT configuration
             var secretKey = _configuration["Jwt:SecretKey"];

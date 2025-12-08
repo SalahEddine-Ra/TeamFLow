@@ -11,6 +11,7 @@ public class OrganizationUser
     public DateTimeOffset? AcceptedAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public bool IsDefault { get; set; } = false;
 
     // Navigation properties
     public Organization Organization { get; set; } = null!;

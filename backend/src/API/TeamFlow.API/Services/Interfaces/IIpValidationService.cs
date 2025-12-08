@@ -4,7 +4,7 @@ namespace TeamFlowAPI.Services.Interfaces
     {
         bool IsValidIp(string ipAddress);
         bool IsSuspiciousActivity(string previousIp, string currentIp);
-        string GetIpLocation(string ipAddress);
+        (double Latitude, double Longitude, string City) GetIpLocation(string ipAddress);
         bool IsPrivateIp(string ipAddress);
     }
 }

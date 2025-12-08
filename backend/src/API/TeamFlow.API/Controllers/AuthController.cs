@@ -1,114 +1,185 @@
-using System;
-using System.Threading.Tasks;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 using TeamFlowAPI.Models.DTOs;
-using TeamFlowAPI.Models.Entities;
-using TeamFlowAPI.Services;
-using TeamFlowAPI.Services.Exceptions;
 using TeamFlowAPI.Services.Interfaces;
 using TeamFlowAPI.Infrastructure.Database;
+using TeamFlowAPI.Models.Entities;
+using TeamFlowAPI.Services.Exceptions;
+using Microsoft.EntityFrameworkCore;
 
+namespace TeamFlowAPI.Controllers;
 
-namespace TeamFlowAPI.Controllers
+// ... existing using directives ...
+
+[ApiController]
+[Route("api/[controller]")]
+public class AuthController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class AuthController : ControllerBase
+    private readonly IRefreshTokensService _refreshTokenService;
+    private readonly IUserService _userService;
+    private readonly IAccessTokensService _accessTokenService;
+    private readonly IIpValidationService _ipValidationService;
+    private readonly ApplicationDbContext _db;
+    private readonly IConfiguration _config;
+    private readonly ILogger<AuthController> _logger;
+
+    public AuthController(
+        IRefreshTokensService refreshTokenService,
+        IUserService userService,
+        IAccessTokensService accessTokenService,
+        IIpValidationService ipValidationService,
+        ApplicationDbContext db,
+        IConfiguration config,
+        ILogger<AuthController> logger)
     {
-        private readonly IRefreshTokenService _refreshTokenService;
-        private readonly IAccessTokenService _accessTokenService;
-        private readonly IUserService _userService;
-        private readonly PasswordService _passwordService;
-        private readonly IIpValidationService _ipValidationService;
-        private readonly ITokenValidationService _tokenValidationService;
-        private readonly ApplicationDbContext _dbContext;
-        private readonly ILogger<AuthController> _logger;
+        _refreshTokenService = refreshTokenService;
+        _userService = userService;
+        _accessTokenService = accessTokenService;
+        _ipValidationService = ipValidationService;
+        _db = db;
+        _config = config;
+        _logger = logger;
+    }
 
-        public AuthController(IRefreshTokenService refreshTokenService,
-                        IAccessTokenService accessTokenService,
-                        IUserService userService,
-                        PasswordService passwordService,
-                        IIpValidationService ipValidationService,
-                        ITokenValidationService tokenValidationService,
-                        ApplicationDbContext applicationDbContext,
-                        ILogger<AuthController> logger)
+    [HttpPost("register")]
+    public async Task<ActionResult<RefreshTokenResponseDto>> Register([FromBody] RegisterDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
+
+        var user = await _userService.RegisterUserAsync(dto);
+        if (user == null) return BadRequest("Registration failed or email exists");
+
+        var ip = GetClientIp();
+
+        var orgUser = new OrganizationUser
         {
-            _refreshTokenService = refreshTokenService ?? throw new ArgumentException(nameof(refreshTokenService));
-            _accessTokenService = accessTokenService ?? throw new ArgumentException(nameof(accessTokenService));
-            _userService = userService ?? throw new ArgumentNullException(nameof(userService));
-            _passwordService = passwordService ?? throw new ArgumentNullException(nameof(passwordService));
-            _ipValidationService = ipValidationService ?? throw new ArgumentNullException(nameof(ipValidationService));
-            _tokenValidationService = tokenValidationService ?? throw new ArgumentNullException(nameof(tokenValidationService));
-            _dbContext = applicationDbContext ?? throw new ArgumentNullException(nameof(applicationDbContext));
-            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-        }
-        // Endpoint 1: registre
+            UserId = user.Id,
+            OrgId = _config.GetValue<long>("Auth:DefaultOrgId", 1),
+            Role = "Member",
+            InviteStatus = "accepted",
+            IsDefault = true
+        };
+        _db.OrganizationUsers.Add(orgUser);
+        await _db.SaveChangesAsync();
 
-        [HttpPost("register")]
-        public async Task<ActionResult<object>> Register([FromBody] RegisterDto registerDto)
+        var refresh = await _refreshTokenService.CreateRefreshTokenAsync(user.Id, ip);
+        var access = _accessTokenService.GenerateAccessToken(user, orgUser, false);
+        var userInfo = await BuildUserInfoAsync(user.Id);
+
+        return Created("", new RefreshTokenResponseDto
         {
-            try
-            {
-                _logger.LogInformation($"Register attempt for email: {registerDto.Email}");
+            AccessToken = access,
+            RefreshToken = refresh,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(_config.GetValue<int>("Jwt:AccessMinutes", 15)),
+            RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(_config.GetValue<int>("RefreshToken:ExpirationDays", 7)),
+            User = userInfo
+        });
+    }
 
+    [HttpPost("login")]
+    public async Task<ActionResult<RefreshTokenResponseDto>> Login([FromBody] LoginDto dto)
+    {
+        if (!ModelState.IsValid) return BadRequest(ModelState);
 
-                // Register user using _userService.RegisterUserAsync()
-                var registeredUser = await _userService.RegisterUserAsync(registerDto);
-                if (!registeredUser)
-                {
-                    return BadRequest(new { error = "Registration failed" });
-                }
+        var user = await _userService.AuthenticateAsync(dto.Email, dto.Password);
+        if (user == null) return Unauthorized("Invalid credentials");
 
-                // Return 201 Created with user email and display name
-                return CreatedAtAction(nameof(Register), new { email = registerDto.Email }, new
-                {
-                    message = "User registered successfully",
-                    email = registerDto.Email,
-                    displayName = registerDto.DisplayName
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"Register error: {ex.Message}");
-                return StatusCode(500, new { error = "Internal server error" });
-            }
-        }
+        var ip = GetClientIp();
+        var refresh = await _refreshTokenService.CreateRefreshTokenAsync(user.Id, ip);
 
-        // Endpoint 2: login
-        [HttpPost("login")]
-        public async Task<ActionResult<Object>> Login([FromBody] LoginDto loginDto)
+        var orgUser = await _db.OrganizationUsers
+            .FirstOrDefaultAsync(ou => ou.UserId == user.Id && ou.IsDefault);
+
+        if (orgUser == null) return BadRequest("No default organization");
+
+        var isPlatformAdmin = await _db.PlatformAdmins.AnyAsync(pa => pa.UserId == user.Id);
+
+        var access = _accessTokenService.GenerateAccessToken(user, orgUser, isPlatformAdmin);
+        
+        var userInfo = await BuildUserInfoAsync(user.Id);
+
+        return Ok(new RefreshTokenResponseDto
         {
-            try
-            {
-                _logger.LogInformation($"Login attempt for email: {loginDto.Email}");
-                var isUserExists = await _userService.ValidateCredentialsAsync(loginDto.Email, loginDto.Password);
-                if (!isUserExists)
-                {
-                    return Unauthorized(new { error = "Invalid email or password" });
-                }
-                var user = await _dbContext.Users.FirstOrDefaultAsync(u => u.Email == loginDto.Email);
+            AccessToken = access,
+            RefreshToken = refresh,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(_config.GetValue<int>("Jwt:AccessMinutes", 15)),
+            RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(_config.GetValue<int>("RefreshToken:ExpirationDays", 7)),
+            User = userInfo
+        });
+    }
 
-                var userOrganization = await _dbContext.OrganizationUsers
-                    .Include(ou => ou.Organization)
-                    .FirstOrDefaultAsync(ou => ou.UserId == user.Id);
+    [HttpPost("refresh")]
+    public async Task<ActionResult<RefreshTokenResponseDto>> Refresh([FromBody] RefreshTokenRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.RefreshToken))
+            return BadRequest("Refresh token is required");
 
-                var clientIp = GetClientIp();
-                var refreshToken = await _refreshTokenService.CreateRefreshTokenAsync(user.Id, clientIp);
-                var accessToken = _accessTokenService.GenerateAccessToken(user, userOrganization);
+        var ip = GetClientIp();
+        var (isValid, newRefresh, userId) = await _refreshTokenService.ValidateAndRotateTokenAsync(dto.RefreshToken, ip);
+        if (!isValid || newRefresh == null) return Unauthorized("Invalid or expired refresh token");
 
-                return Ok(new
-                {
-                    accessToken = accessToken,
-                    refreshToken = refreshToken
-                });
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Id == userId);
+        if (user == null) return Unauthorized("User not found");
 
-            }catch (Exception ex)
-            {
-                _logger.LogError($"Login error: {ex.Message}");
-                return StatusCode(500, new { error = "Internal server error" });
-            }
-        }
+        var orgUser = await _db.OrganizationUsers
+            .FirstOrDefaultAsync(ou => ou.UserId == userId && ou.IsDefault);
+        if (orgUser == null) return BadRequest("No default organization");
+
+        var isPlatformAdmin = await _db.PlatformAdmins.AnyAsync(pa => pa.UserId == userId);
+
+        var access = _accessTokenService.GenerateAccessToken(user, orgUser, isPlatformAdmin);
+        var userInfo = await BuildUserInfoAsync(userId);
+
+        return Ok(new RefreshTokenResponseDto
+        {
+            AccessToken = access,
+            RefreshToken = newRefresh,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(_config.GetValue<int>("Jwt:AccessMinutes", 15)),
+            RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(_config.GetValue<int>("RefreshToken:ExpirationDays", 7)),
+            User = userInfo
+        });
+    }
+
+    [Authorize]
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout([FromBody] RefreshTokenRequestDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.RefreshToken))
+            return BadRequest("Refresh token is required");
+
+        var ip = GetClientIp();
+        var revoked = await _refreshTokenService.RevokeTokenAsync(dto.RefreshToken, ip);
+        return revoked ? Ok() : BadRequest("Token not found");
+    }
+
+    private string GetClientIp()
+    {
+        var forwarded = Request.Headers["X-Forwarded-For"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwarded) && _ipValidationService.IsValidIp(forwarded))
+            return forwarded;
+
+        var remote = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return _ipValidationService.IsValidIp(remote) ? remote : "unknown";
+    }
+
+    private async Task<UserInfoDto> BuildUserInfoAsync(long userId)
+    {
+        var ou = await _db.OrganizationUsers
+            .Include(ou => ou.Organization)
+            .Where(ou => ou.UserId == userId && ou.IsDefault)
+            .FirstOrDefaultAsync();
+
+        var user = await _db.Users.FirstAsync(u => u.Id == userId);
+
+        var isPlatformAdmin = await _db.PlatformAdmins.AnyAsync(pa => pa.UserId == userId);
+        return new UserInfoDto
+        {
+            Id = user.Id,
+            DisplayName = user.DisplayName ?? "",
+            Role = ou?.Role ?? "Member",
+            CurrentOrgId = ou?.OrgId ?? 0,
+            CurrentOrgName = ou?.Organization?.Name ?? "",
+            IsPlatformAdmin = isPlatformAdmin
+        };
     }
 }

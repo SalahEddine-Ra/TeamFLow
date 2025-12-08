@@ -10,7 +10,7 @@ using TeamFlowAPI.Services.Exceptions;
 namespace TeamFlowAPI.Services
 {
     /// Service for managing refresh tokens with security validations
-    public class RefreshTokenService : IRefreshTokenService
+    public class RefreshTokenService : IRefreshTokensService
     {
         private readonly IConfiguration _configuration;
         private readonly ApplicationDbContext _dbContext;
@@ -85,84 +85,73 @@ namespace TeamFlowAPI.Services
         }
 
         /// Validates and rotates a refresh token
-        public async Task<(bool IsValid, string? NewRefreshToken)> ValidateAndRotateTokenAsync(string token, string ipAddress)
+public async Task<(bool IsValid, string? NewRefreshToken, long UserId)> ValidateAndRotateTokenAsync(string token, string ipAddress)
+{
+    try
+    {
+        if (string.IsNullOrWhiteSpace(token))
         {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(token))
-                {
-                    throw new InvalidTokenException("Token cannot be empty");
-                }
-
-                if (string.IsNullOrWhiteSpace(ipAddress))
-                {
-                    throw new ArgumentException("IP address cannot be empty", nameof(ipAddress));
-                }
-
-                // Validate IP format
-                if (!_ipValidationService.IsValidIp(ipAddress))
-                {
-                    _logger.LogWarning("Invalid IP format in token rotation: {IpAddress}", ipAddress);
-                    return (false, null);
-                }
-
-                // Filter database query at database level 
-                var refreshTokens = await _dbContext.RefreshTokens
-                    .Include(rt => rt.User)
-                    .Where(rt => rt.ExpiresAt > DateTime.UtcNow
-                            && rt.RevokedAt == null
-                            && rt.User.IsActive)
-                    .OrderByDescending(rt => rt.CreatedAt)
-                    .Take(10)
-                    .ToListAsync();
-
-                // Verify token using BCrypt (in-memory after filtering)
-                var refreshToken = refreshTokens.FirstOrDefault(rt => BCrypt.Net.BCrypt.Verify(token, rt.TokenHash));
-
-                if (refreshToken == null)
-                {
-                    _logger.LogWarning("Token verification failed - no matching token found");
-                    return (false, null);
-                }
-
-                // Validate IP matches the token's creation IP
-                if (refreshToken.CreatedByIp != ipAddress)
-                {
-                    _logger.LogWarning("Token IP mismatch for user {UserId}",
-                        refreshToken.UserId);
-                    return (false, null);
-                }
-
-                // Check for suspicious activity
-                var (isSuspicious, reason) = await _tokenValidationService.CheckSuspiciousActivityAsync(refreshToken.UserId, ipAddress);
-                if (isSuspicious)
-                {
-                    _logger.LogWarning("Suspicious activity detected for user {UserId}: {Reason}", refreshToken.UserId, reason);
-                    throw new SuspiciousActivityException(reason);
-                }
-
-                // Revoke old token
-                refreshToken.RevokedAt = DateTime.UtcNow;
-
-                // Create new token
-                var newToken = await CreateRefreshTokenAsync(refreshToken.UserId, ipAddress);
-                await _dbContext.SaveChangesAsync();
-
-                _logger.LogInformation("Token rotated successfully for user {UserId}", refreshToken.UserId);
-                return (true, newToken);
-            }
-            catch (SuspiciousActivityException ex)
-            {
-                _logger.LogWarning(ex, "Suspicious activity detected during token rotation");
-                return (false, null);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error validating and rotating token");
-                throw;
-            }
+            throw new InvalidTokenException("Token cannot be empty");
         }
-
+        if (string.IsNullOrWhiteSpace(ipAddress))
+        {
+            throw new ArgumentException("IP address cannot be empty", nameof(ipAddress));
+        }
+        // Validate IP format
+        if (!_ipValidationService.IsValidIp(ipAddress))
+        {
+            _logger.LogWarning("Invalid IP format in token rotation: {IpAddress}", ipAddress);
+            return (false, null, 0);
+        }
+        // Filter database query at database level 
+        var refreshTokens = await _dbContext.RefreshTokens
+            .Include(rt => rt.User)
+            .Where(rt => rt.ExpiresAt > DateTime.UtcNow
+                    && rt.RevokedAt == null
+                    && rt.User.IsActive)
+            .OrderByDescending(rt => rt.CreatedAt)
+            .Take(10)
+            .ToListAsync();
+        // Verify token using BCrypt (in-memory after filtering)
+        var refreshToken = refreshTokens.FirstOrDefault(rt => BCrypt.Net.BCrypt.Verify(token, rt.TokenHash));
+        if (refreshToken == null)
+        {
+            _logger.LogWarning("Token verification failed - no matching token found");
+            return (false, null, 0);
+        }
+        // Validate IP matches the token's creation IP
+        if (refreshToken.CreatedByIp != ipAddress)
+        {
+            _logger.LogWarning("Token IP mismatch for user {UserId}",
+                refreshToken.UserId);
+            return (false, null, 0);
+        }
+        // Check for suspicious activity
+        var (isSuspicious, reason) = await _tokenValidationService.CheckSuspiciousActivityAsync(refreshToken.UserId, ipAddress);
+        if (isSuspicious)
+        {
+            _logger.LogWarning("Suspicious activity detected for user {UserId}: {Reason}", refreshToken.UserId, reason);
+            throw new SuspiciousActivityException(reason);
+        }
+        // Revoke old token
+        refreshToken.RevokedAt = DateTime.UtcNow;
+        // Create new token
+        var newToken = await CreateRefreshTokenAsync(refreshToken.UserId, ipAddress);
+        await _dbContext.SaveChangesAsync();
+        _logger.LogInformation("Token rotated successfully for user {UserId}", refreshToken.UserId);
+        return (true, newToken, refreshToken.UserId);
+    }
+    catch (SuspiciousActivityException ex)
+    {
+        _logger.LogWarning(ex, "Suspicious activity detected during token rotation");
+        return (false, null, 0);
+    }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Error validating and rotating token");
+        throw;
+    }
+}
         /// Revokes a single refresh token
         public async Task<bool> RevokeTokenAsync(string token, string revokedByIp)
         {

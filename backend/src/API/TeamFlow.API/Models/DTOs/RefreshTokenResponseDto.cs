@@ -10,6 +10,7 @@ namespace TeamFlowAPI.Models.DTOs
         public string Role { get; set; } = string.Empty;      
         public long CurrentOrgId { get; set; }                  
         public string CurrentOrgName { get; set; } = string.Empty;
+        public bool IsPlatformAdmin { get; set; }
     }
 
 

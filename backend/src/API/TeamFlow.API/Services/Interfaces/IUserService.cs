@@ -1,17 +1,13 @@
-
 using System.Threading.Tasks;
 using TeamFlowAPI.Models.DTOs;
+using TeamFlowAPI.Models.Entities;
 
-namespace TeamFlowAPI.Services.Interfaces
+namespace TeamFlowAPI.Services.Interfaces;
+
+public interface IUserService
 {
-    public interface IUserService
-    {
-        // Email validation
-        Task<bool> EmailExistsAsync(string Email);
-
-        // User registration
-        Task<bool> RegisterUserAsync(RegisterDto registerDto);
-
-        Task<bool> ValidateCredentialsAsync(string Email, string password);
-    }
+    Task<bool> EmailExistsAsync(string email);
+    Task<User?> RegisterUserAsync(RegisterDto registerDto);
+    Task<User?> AuthenticateAsync(string email, string password);  
+    
 }
